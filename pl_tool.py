@@ -51,7 +51,7 @@ class TeethSegment(pl.LightningModule):
             self.optimizer,
             base_lr=4e-5,  # self.learning_rate / 2,
             max_lr=4e-4,  # self.learning_rate * 10,
-            step_size_up=3890,
+            step_size_up=10,
             mode="triangular",
             cycle_momentum=False,
         )
@@ -59,7 +59,7 @@ class TeethSegment(pl.LightningModule):
             "optimizer": self.optimizer,
             "lr_scheduler": {
                 "scheduler": self.scheduler,
-                "interval": "step",
+                # "interval": "step",
             },
         }
 
@@ -71,6 +71,8 @@ class TeethSegment(pl.LightningModule):
         self.log("learning_rate", self.scheduler.get_last_lr()[0])
         self.train_predict.append(torch.sigmoid(logits))
         self.train_label.append(y)
+        if batch_idx % 10 == 0:
+            loss = -1e-3 * loss
         return loss
 
     def validation_step(self, batch, batch_idx):
