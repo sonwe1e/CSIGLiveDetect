@@ -207,15 +207,21 @@ test_transform = A.Compose(
 )
 
 
-def get_dataloader(split="train", bs=512, transform=train_transform, fold=1, type='phase1'):
-    dataset = SuHiFiMaskDataset(
-        split=split,
-        transform=transform,
-        fold=fold,
-    ) if type == 'phase1' else SuHiFiMaskDataset_adv(
-        split=split,
-        transform=transform,
-        fold=fold,
+def get_dataloader(
+    split="train", bs=512, transform=train_transform, fold=1, type="phase1"
+):
+    dataset = (
+        SuHiFiMaskDataset(
+            split=split,
+            transform=transform,
+            fold=fold,
+        )
+        if type == "phase1"
+        else SuHiFiMaskDataset_adv(
+            split=split,
+            transform=transform,
+            fold=fold,
+        )
     )
     dataloader = DataLoader(
         dataset,
