@@ -47,12 +47,14 @@ class TeethSegment(pl.LightningModule):
             lr=self.learning_rate,
             weight_decay=self.config.weight_decay,
         )
-        self.scheduler = torch.optim.lr_scheduler.CyclicLR(
+        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
             self.optimizer,
-            base_lr=4e-5,  # self.learning_rate / 2,
-            max_lr=4e-4,  # self.learning_rate * 10,
-            step_size_up=3890,
-            mode="triangular",
+            max_lr=self.learning_rate,
+            pct_start=0.06,
+            epochs=self.config.epochs,
+            steps_per_epoch=389,
+            anneal_strategy="cos",
+            final_div_factor=1e2,
             cycle_momentum=False,
         )
         return {
@@ -67,7 +69,7 @@ class TeethSegment(pl.LightningModule):
         x, y = batch
         logits = self.model(x)
         loss = self.bce_loss(logits, y)
-        self.log("train_loss", loss, prog_bar=True)
+        self.log("train_loss", loss, on_step=True, prog_bar=True)
         self.log("learning_rate", self.scheduler.get_last_lr()[0])
         self.train_predict.append(torch.sigmoid(logits))
         self.train_label.append(y)

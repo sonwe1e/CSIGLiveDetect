@@ -5,18 +5,18 @@ from pl_tool import TeethSegment
 import torch
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import WandbLogger
-import wandb
-torch.set_float32_matmul_precision("high")
+
+# torch.set_float32_matmul_precision("high")
 
 
 def get_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("-b", "--batch_size", type=int, default=500)
-    parser.add_argument("-l", "--learning_rate", type=float, default=4e-4)
-    parser.add_argument("-wd", "--weight_decay", type=float, default=4e-4)
+    parser.add_argument("-b", "--batch_size", type=int, default=512)
+    parser.add_argument("-l", "--learning_rate", type=float, default=6e-4)
+    parser.add_argument("-wd", "--weight_decay", type=float, default=1e-3)
     parser.add_argument("-p", "--precision", type=str, default="bf16-mixed")
-    parser.add_argument("-e", "--epochs", type=int, default=100)
+    parser.add_argument("-e", "--epochs", type=int, default=120)
     parser.add_argument("--exp_name", type=str, default="0")
     parser.add_argument("-f", "--fold", type=int, default=0)
     parser.add_argument("--seed", type=int, default=3407)
@@ -24,12 +24,11 @@ def get_args():
 
 
 if __name__ == "__main__":
-    # torch.multiprocessing.set_start_method('spawn', force=True)
     config = get_args()
     pl.seed_everything(config.seed)
-    for i in range(6):
+    for i in range(1, 5):
         config.fold = i
-        config.exp_name = str(i)
+        config.exp_name = f"mixup0.3+randomcropresize0.64+fold5+{i}"
         train_dataloader = get_dataloader(
             bs=config.batch_size,
             split="train",
@@ -54,8 +53,9 @@ if __name__ == "__main__":
             default_root_dir="./",
             deterministic=False,
             logger=wandb_logger,
-            log_every_n_steps=5,
+            # limit_train_batches=0.2,
             callbacks=[
+                # pl.callbacks.LearningRateFinder(),
                 pl.callbacks.ModelCheckpoint(
                     dirpath=f"./LiveDetect/{config.exp_name}/",
                     monitor="valid_acer",
@@ -70,6 +70,4 @@ if __name__ == "__main__":
             TeethSegment(config, model),
             train_dataloaders=train_dataloader,
             val_dataloaders=valid_dataloader,
-            # ckpt_path='./epoch=97-valid_acer=0.0170.ckpt'
         )
-        wandb.finish()
