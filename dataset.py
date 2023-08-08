@@ -26,9 +26,6 @@ class SuHiFiMaskDataset(Dataset):
     def __init__(self, split="train", transform=None, fold=0, max_threads=24):
         self.split = split
         self.transform = transform
-        self.labels = {}
-        self.images = {}
-        self.images_list = []
         self.data_path = "./phase1/"
         if split != "test":
             train_list = open("./data_info/train_label.txt", "r").readlines()
