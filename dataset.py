@@ -7,59 +7,9 @@ from torch.utils.data import Dataset
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import os
-
-
-def mixup(image1, image2, label1, label2, alpha=0.25):
-    """
-    实现Mixup数据增强技术
-    :param image1: 第一个图像，格式为 (224, 224, 3)
-    :param label1: 第一个图像对应的标签
-    :param image2: 第二个图像，格式为 (224, 224, 3)
-    :param label2: 第二个图像对应的标签
-    :param alpha: 超参数alpha用于控制Mixup的强度，取值范围为 [0, 1]
-    :return: 混合后的图像和对应的标签
-    """
-    assert 0.0 <= alpha <= 1.0, "alpha超出取值范围 [0, 1]"
-
-    # 随机生成lambda值，lambda值用于确定混合的比例
-    lambda_ = np.random.beta(alpha, alpha)
-
-    # 使用lambda值进行线性插值
-    mixed_image = lambda_ * image1 + (1 - lambda_) * image2
-
-    # 使用lambda值进行标签插值
-    mixed_label = lambda_ * label1 + (1 - lambda_) * label2
-
-    return mixed_image, mixed_label
-
-
-def cutmix(image1, image2, label1, label2, alpha=0.25):
-    """
-    实现CutMix数据增强技术
-    :param image1: 第一个图像，格式为 (224, 224, 3)
-    :param image2: 第二个图像，格式为 (224, 224, 3)
-    :param alpha: 超参数alpha用于控制CutMix的强度，取值范围为 [0, 1]
-    :return: 混合后的图像和对应的标签
-    """
-    assert 0.0 <= alpha <= 1.0, "alpha超出取值范围 [0, 1]"
-
-    # 随机生成lambda值，lambda值用于确定混合的比例
-    lambda_ = np.random.beta(alpha, alpha)
-
-    # 随机生成混合的区域
-    cut_w = int(image1.shape[1] * lambda_)
-    cut_h = int(image1.shape[0] * lambda_)
-    cx = np.random.randint(0, image1.shape[1] - cut_w + 1)
-    cy = np.random.randint(0, image1.shape[0] - cut_h + 1)
-
-    # 创建新的图像
-    new_image = image1.copy()
-    new_image[cy : cy + cut_h, cx : cx + cut_w, :] = image2[
-        cy : cy + cut_h, cx : cx + cut_w, :
-    ]
-    new_label = lambda_ * label1 + (1 - lambda_) * label2
-
-    return new_image, new_label
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+from tqdm import tqdm
 
 
 def read_data(name_label, image_path, split="test"):
@@ -72,7 +22,7 @@ def read_data(name_label, image_path, split="test"):
 
 
 class SuHiFiMaskDataset(Dataset):
-    def __init__(self, split="train", transform=None, fold=0, max_threads=32):
+    def __init__(self, split="train", transform=None, fold=0, max_threads=24):
         self.split = split
         self.transform = transform
         self.labels = {}
@@ -80,12 +30,12 @@ class SuHiFiMaskDataset(Dataset):
         self.images_list = []
         self.data_path = "./phase1/"
         if split != "test":
-            self.name_label = (
-                open(f"./data_info/train_label.txt", "r").readlines()
-                + open(f"./data_info/dev_label.txt", "r").readlines()
-            )
-            random.shuffle(self.name_label)
-            l = len(self.name_label) // 6
+            train_list = open(f"./data_info/train_label.txt", "r").readlines()
+            dev_list = open(f"./data_info/dev_label.txt", "r").readlines()
+            random.shuffle(train_list)
+            random.shuffle(dev_list)
+            self.name_label = train_list + dev_list
+            l = len(self.name_label) // 5
             self.name_label = (
                 (self.name_label[: fold * l] + self.name_label[(fold + 1) * l :])
                 if split == "train"
@@ -93,43 +43,30 @@ class SuHiFiMaskDataset(Dataset):
             )
         else:
             self.name_label = open(f"./data_info/{self.split}.txt", "r").readlines()
+        with ThreadPoolExecutor(max_workers=max_threads) as executor:
+            read_data_partial = partial(
+                read_data, image_path=self.data_path, split=split
+            )
+            for image_name, image, label in tqdm(
+                executor.map(read_data_partial, self.name_label)
+            ):
+                self.images[image_name] = image
+                self.labels[image_name] = label
+                self.images_list.append(image_name)
 
     def __len__(self):
-        return len(self.name_label)
+        return len(self.images_list)
 
     def __getitem__(self, idx):
-        image_name = self.name_label[idx]
-        image_name, image, label = read_data(
-            name_label=image_name, image_path=self.data_path, split=self.split
-        )
+        image_name = self.images_list[idx]
         if self.split != "test":
-            if self.split == "train" and np.random.rand() < 0.5:
-                if np.random.rand() < 0.4:
-                    idx2 = np.random.randint(0, len(self.name_label))
-                    image_name2 = self.name_label[idx2]
-                    image_name2, image2, label2 = read_data(
-                        name_label=image_name2,
-                        image_path=self.data_path,
-                        split=self.split,
-                    )
-                    image2 = cv2.resize(image2, (image.shape[1], image.shape[0]))
-                    image, label = cutmix(image, image2, label, label2)
-                if np.random.rand() < 0.4:
-                    idx2 = np.random.randint(0, len(self.name_label))
-                    image_name2 = self.name_label[idx2]
-                    image_name2, image2, label2 = read_data(
-                        name_label=image_name2,
-                        image_path=self.data_path,
-                        split=self.split,
-                    )
-                    image2 = cv2.resize(image2, (image.shape[1], image.shape[0]))
-                    image, label = mixup(image, image2, label, label2)
-            image = image.astype(np.uint8)
+            image, label = self.images[image_name], self.labels[image_name]
             label = torch.tensor(label).float()
             if self.transform:
                 image = self.transform(image=image)["image"]
             return image, label.unsqueeze(0)
         else:
+            image = self.images[image_name]
             if self.transform:
                 image = self.transform(image=image)["image"]
             return image, image_name
@@ -142,7 +79,7 @@ class SuHiFiMaskDataset_adv(Dataset):
         self.image_list = os.listdir(self.data_path)
         self.transform = transform
         random.shuffle(self.image_list)
-        l = len(self.image_list) // 6
+        l = len(self.image_list) // 5
         self.image_list = (
             self.image_list[: fold * l] + self.image_list[(fold + 1) * l :]
             if split == "train"
@@ -178,7 +115,7 @@ train_transform = A.Compose(
         A.RandomResizedCrop(
             224,
             224,
-            scale=(0.2, 1.0),
+            scale=(0.64, 1.0),
             p=1,
         ),
         A.HorizontalFlip(p=0.5),
@@ -227,7 +164,7 @@ def get_dataloader(
         dataset,
         batch_size=bs,
         shuffle=True if split == "train" else False,
-        num_workers=16,
+        num_workers=8,
         pin_memory=True,
         persistent_workers=True,
     )

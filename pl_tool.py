@@ -4,11 +4,32 @@ import torch
 import torch.nn as nn
 from lion_pytorch import Lion
 from dataset import *
+import numpy as np
 import torch.nn.functional as F
 
 torch.set_float32_matmul_precision("high")
 
-import numpy as np
+
+def mixup(images, labels, alpha=1.0):
+    """
+    在batch级别实现Mixup数据增强
+    :param images: 一组图像，形状为 (B, C, H, W)
+    :param labels: 对应的标签
+    :param alpha: 控制Mixup的强度的超参数，取值范围为 [0, 1]
+    :return: 混合后的图像和标签
+    """
+    if alpha > 0:
+        lambda_ = np.random.beta(alpha, alpha)
+    else:
+        lambda_ = 1
+
+    batch_size = images.size()[0]
+    index = torch.randperm(batch_size, device=images.device)
+    y_a, y_b = labels, labels[index]
+    mixed_images = lambda_ * images + (1 - lambda_) * images[index]
+    # mixed_labels = lambda_ * y_a + (1 - lambda_) * y_b
+
+    return mixed_images, y_a, y_b, lambda_
 
 
 def calculate_apcer_bpcer(pred, label, threshold=0.5):
@@ -47,32 +68,35 @@ class TeethSegment(pl.LightningModule):
             lr=self.learning_rate,
             weight_decay=self.config.weight_decay,
         )
-        self.scheduler = torch.optim.lr_scheduler.CyclicLR(
+        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
             self.optimizer,
-            base_lr=4e-5,  # self.learning_rate / 2,
-            max_lr=4e-4,  # self.learning_rate * 10,
-            step_size_up=10,
-            mode="triangular",
+            max_lr=self.learning_rate,
+            epochs=self.config.epochs,
+            steps_per_epoch=389,
+            pct_start=0.06,
+            final_div_factor=1e2,
+            anneal_strategy="cos",
             cycle_momentum=False,
         )
         return {
             "optimizer": self.optimizer,
             "lr_scheduler": {
                 "scheduler": self.scheduler,
-                # "interval": "step",
+                "interval": "step",
             },
         }
 
     def training_step(self, batch, batch_idx):
         x, y = batch
+        x, y_a, y_b, lambda_ = mixup(x, y)
         logits = self.model(x)
-        loss = self.bce_loss(logits, y)
+        loss = lambda_ * self.bce_loss(logits, y_a) + (1 - lambda_) * self.bce_loss(
+            logits, y_b
+        )
         self.log("train_loss", loss, prog_bar=True)
         self.log("learning_rate", self.scheduler.get_last_lr()[0])
         self.train_predict.append(torch.sigmoid(logits))
         self.train_label.append(y)
-        if batch_idx % 10 == 0:
-            loss = -1e-3 * loss
         return loss
 
     def validation_step(self, batch, batch_idx):
